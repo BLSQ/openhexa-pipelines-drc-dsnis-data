@@ -156,7 +156,7 @@ def handle_data_element_extracts(
             continue
 
         source_dataset = source_datasets.filter(pl.col("id").is_in([dataset_id]))
-        org_units = source_dataset["organisation_units"][0]
+        org_units = list(source_dataset["organisation_units"][0])
         current_run.log_info(
             f"Starting data elements extract ID: '{extract_id}' ({idx + 1}) "
             f"with {len(data_element_uids)} data elements across {len(org_units)} org units from dataset "
@@ -219,7 +219,7 @@ def update_snis_dataset_with_extracts(
 def save_updates_collector_json(updates_collector: dict, output_path: Path) -> None:
     """Save updates_collector as a JSON file, raising an error if it fails."""
     try:
-        serializable = {k: [str(p) for p in v] for k, v in updates_collector.items()}
+        serializable = {k: [str(p.name) for p in v] for k, v in updates_collector.items()}
         with Path.open(output_path, "w", encoding="utf-8") as f:
             json.dump(serializable, f, indent=2)
     except Exception as e:
