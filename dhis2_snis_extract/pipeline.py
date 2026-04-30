@@ -59,7 +59,17 @@ from utils import (
     default=True,
     required=False,
 )
-def dhis2_snis_extract(run_orgunits: bool, run_pop: bool, run_analytics: bool, start_date: str, end_date: str):
+@parameter(
+    "add_to_dataset",
+    name="Add extracts to dataset",
+    help="Create a new version with the extracts created in this run.",
+    type=bool,
+    default=True,
+    required=False,
+)
+def dhis2_snis_extract(
+    run_orgunits: bool, run_pop: bool, run_analytics: bool, start_date: str, end_date: str, add_to_dataset: bool
+) -> None:
     """Simple pipeline to retrieve the a monthly PNLP related data extract from DHIS2 SNIS instance."""
     pipeline_path = Path(workspace.files_path) / "pipelines" / "dhis2_snis_extract"
 
@@ -72,7 +82,7 @@ def dhis2_snis_extract(run_orgunits: bool, run_pop: bool, run_analytics: bool, s
         extract_pyramid(
             pipeline_path=pipeline_path,
             dhis2_snis_client=dhis2_client,
-            run_pipeline=run_orgunits,
+            run=run_orgunits,
             updates_collector=updates_collector,
         )
 
@@ -82,7 +92,7 @@ def dhis2_snis_extract(run_orgunits: bool, run_pop: bool, run_analytics: bool, s
             start_date=start_date,
             end_date=end_date,
             config=config,
-            run_pipeline=run_pop,
+            run=run_pop,
             updates_collector=updates_collector,
         )
 
@@ -92,25 +102,28 @@ def dhis2_snis_extract(run_orgunits: bool, run_pop: bool, run_analytics: bool, s
             end_date=end_date,
             config=config,
             dhis2_snis_client=dhis2_client,
-            run_pipeline=run_analytics,
+            run=run_analytics,
             updates_collector=updates_collector,
         )
 
         update_snis_dataset(
             updates_collector=updates_collector,
             dataset_id="snis-extracts",
+            run=add_to_dataset,
         )
+
+        current_run.log_info("Pipeline execution completed successfully.")
 
     except Exception as e:
         current_run.log_error(f"Error occurred: {e}")
 
 
-def extract_pyramid(pipeline_path: str, dhis2_snis_client: DHIS2, run_pipeline: bool, updates_collector: dict) -> None:
+def extract_pyramid(pipeline_path: str, dhis2_snis_client: DHIS2, run: bool, updates_collector: dict) -> None:
     """Pyramid extraction task.
 
     extracts and saves a pyramid dataframe for all levels (could be set via config in the future)
     """
-    if not run_pipeline:
+    if not run:
         return
 
     current_run.log_info("Retrieving SNIS DHIS2 pyramid data")
@@ -144,13 +157,13 @@ def extract_population(
     end_date: str,
     dhis2_snis_client: str,
     config: dict,
-    run_pipeline: bool,
+    run: bool,
     updates_collector: dict,
 ) -> None:
     """Population data extraction task."""
     # NOTE: Population data is extracted per year period. Is enough to extract population once per year,
     # but we need to account for updates at the beginning of each year, so we keep retrieving and pushing.
-    if not run_pipeline:
+    if not run:
         return True
 
     current_run.log_info("Retrieving SNIS DHIS2 population data")
@@ -200,11 +213,11 @@ def extract_analytics(
     end_date: str,
     config: dict,
     dhis2_snis_client: DHIS2,
-    run_pipeline: bool,
+    run: bool,
     updates_collector: dict,
 ) -> None:
     """Data extraction task."""
-    if not run_pipeline:
+    if not run:
         return
 
     current_run.log_info("Retrieving SNIS DHIS2 analytics data")
@@ -363,11 +376,14 @@ def build_snis_extract(
     updates_collector.setdefault("snis_extracts", []).append(file_path)
 
 
-def update_snis_dataset(updates_collector: dict[Path], dataset_id: str) -> None:
+def update_snis_dataset(updates_collector: dict[Path], dataset_id: str, run: bool) -> None:
     """Updates the SNIS dataset with the new extracts.
 
     This function takes the paths of the new extracts from the updates collector and updates the OH dataset.
     """
+    if not run:
+        return
+
     new_extracts = [item for values in updates_collector.values() for item in values]
 
     if not new_extracts:
