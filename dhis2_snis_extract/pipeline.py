@@ -15,7 +15,7 @@ from utils import (
 )
 
 
-@pipeline("dhis2_snis_extract")
+@pipeline("dhis2_snis_extract", timeout=28800)
 @parameter(
     code="start_date",
     name="Start date (format: YYYYMM)",
