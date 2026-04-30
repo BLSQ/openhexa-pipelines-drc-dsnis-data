@@ -86,7 +86,6 @@ def dhis2_snis_extract(run_orgunits: bool, run_pop: bool, run_analytics: bool, s
             updates_collector=updates_collector,
         )
 
-        # retrieve data extracts
         extract_analytics(
             pipeline_path=pipeline_path,
             start_date=start_date,
@@ -99,7 +98,7 @@ def dhis2_snis_extract(run_orgunits: bool, run_pop: bool, run_analytics: bool, s
 
         update_snis_dataset(
             updates_collector=updates_collector,
-            dataset_id="dhis2-snis-analytics-extract",
+            dataset_id="snis-extracts",
         )
 
     except Exception as e:
@@ -133,7 +132,7 @@ def extract_pyramid(pipeline_path: str, dhis2_snis_client: DHIS2, run_pipeline: 
         current_run.log_info(f"SNIS DHIS2 pyramid data saved: {pyramid_path / 'snis_pyramid.parquet'}")
 
         # add to updates collector
-        updates_collector.setdefault("pyramid", []).append((pyramid_path / "snis_pyramid.parquet").as_posix())
+        updates_collector.setdefault("pyramid", []).append(pyramid_path / "snis_pyramid.parquet")
 
     except Exception as e:
         raise Exception(f"Error while extracting SNIS DHIS2 Pyramid: {e}") from e
@@ -189,7 +188,7 @@ def extract_population(
             save_to_parquet(population_table_formatted, filename=pop_file)
 
             # add to updates collector
-            updates_collector.setdefault("population", []).append(pop_file.as_posix())
+            updates_collector.setdefault("population", []).append(pop_file)
 
     except Exception as e:
         raise Exception(f"Population task error : {e}") from e
@@ -361,10 +360,10 @@ def build_snis_extract(
     else:
         current_run.log_info(f"Saving extract for period {period}.")
     save_to_parquet(merged_extract, file_path)
-    updates_collector.setdefault("snis_extracts", []).append(file_path.as_posix())
+    updates_collector.setdefault("snis_extracts", []).append(file_path)
 
 
-def update_snis_dataset(updates_collector: dict, dataset_id: str) -> None:
+def update_snis_dataset(updates_collector: dict[Path], dataset_id: str) -> None:
     """Updates the SNIS dataset with the new extracts.
 
     This function takes the paths of the new extracts from the updates collector and updates the OH dataset.
