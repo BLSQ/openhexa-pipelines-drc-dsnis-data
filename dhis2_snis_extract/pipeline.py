@@ -278,11 +278,11 @@ def handle_extract_for_period(
 
     # Build snis extract (merge for compatibility with old format)
     build_snis_extract(
-        raw_routine_path,
-        raw_rates_path,
-        raw_acm_path,
-        period,
-        pipeline_path / "data" / "snis_extracts" / f"snis_data_{period}.parquet",
+        raw_routine_path=raw_routine_path,
+        raw_rates_path=raw_rates_path,
+        raw_acm_path=raw_acm_path,
+        period=period,
+        file_path=pipeline_path / "data" / "snis_extracts" / f"snis_data_{period}.parquet",
         updates_collector=updates_collector,
     )
 
@@ -361,6 +361,16 @@ def build_snis_extract(
     This function reads the raw routine, rates, and ACM data from their respective file paths,
     merges them into a single DataFrame, and saves the merged extract in Parquet format.
     """
+    if raw_routine_path is None:
+        current_run.log_error(f"Missing routine input file for period {period}: Skipping merge extract.")
+        return
+    if raw_rates_path is None:
+        current_run.log_error(f"Missing reporting rates input file for period {period}: Skipping merge extract.")
+        return
+    if raw_acm_path is None:
+        current_run.log_error(f"Missing indicators input file for period {period}: Skipping merge extract.")
+        return
+
     # read raw data
     routine_df = pd.read_parquet(raw_routine_path)
     rates_df = pd.read_parquet(raw_rates_path)
