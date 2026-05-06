@@ -189,7 +189,7 @@ def extract_population(
             )
 
             population_table = pd.DataFrame(raw_pop_data)
-            population_table_formatted = map_to_snis_format(dhis_data=population_table, data_type="POPULATION")
+            population_table_formatted = map_to_snis_pop_format(dhis_data=population_table, data_type="POPULATION")
 
             # Save as Parquet
             pop_file = pop_path / f"snis_population_{period}.parquet"
@@ -410,12 +410,14 @@ def update_snis_dataset(updates_collector: dict[Path], dataset_id: str, run: boo
         raise Exception(f"Error while updating SNIS dataset: {e}") from e
 
 
-def map_to_snis_format(
+def map_to_snis_pop_format(
     dhis_data: pd.DataFrame,
-    data_type: str = "DATAELEMENT",
+    data_type: str = "POPULATION",
     domain_type: str = "AGGREGATED",
 ) -> pd.DataFrame:
     """Maps DHIS2 data to a standardized data extraction table.
+
+    NOTE: Just re-using this code for population extracts format, does not work for other types.
 
     Parameters
     ----------
@@ -425,10 +427,10 @@ def map_to_snis_format(
         and `value` based on the data type.
     data_type : str
         The type of data being mapped. Supported values are:
-        - "DATAELEMENT": Includes `categoryOptionCombo` and maps `dataElement` to `dx_uid`.
-        - "DATASET": Maps `dx` to `dx_uid` and `rate_type` by split the string by `.`.
-        - "INDICATOR": Maps `dx` to `dx_uid`.
-        - "POPULATION": Maps `dx` to `dx_uid` and the rest of DHIS2 raw columns
+        - "DATAELEMENT": Includes `categoryOptionCombo` and maps `dataElement` to `dx`.
+        - "REPORTING_RATE": Maps `dx` and `rate_metric` by split the string by `.`.
+        - "INDICATOR": Maps `dx` to `dx`.
+        - "POPULATION": Maps `dx` to `dx` and the rest of DHIS2 raw columns
         Default is "DATAELEMENT".
     domain_type : str, optional
         The domain of the data if its per period (Agg ex: monthly) or datapoint (Tracker ex: per day):
@@ -440,30 +442,31 @@ def map_to_snis_format(
     pd.DataFrame
         A DataFrame formatted to SNIS standards, with the following columns:
         - "data_type": The type of data (DATAELEMENT, DATASET, or INDICATOR).
-        - "dx_uid": Data element, dataset, or indicator UID.
+        - "dx": Data element, dataset, or indicator UID.
         - "period": Reporting period.
         - "orgUnit": Organization unit.
         - "categoryOptionCombo": (Only for DATAELEMENT) Category option combo UID.
-        - "rate_type": (Only for DATASET) Rate type.
+        - "rate_metric": (Only for DATASET) Rate type.
         - "domain_type": Data domain (AGGREGATED or TRACKER).
         - "value": Data value.
     """
     if dhis_data.empty:
         return None
 
-    if data_type not in ["DATAELEMENT", "DATASET", "INDICATOR", "POPULATION"]:
-        raise ValueError("Incorrect 'data_type' configuration ('DATAELEMENT', 'DATASET', 'INDICATOR', 'POPULATION')")
+    # NOTE: limit the usage to population
+    if data_type not in ["POPULATION"]:
+        raise ValueError("Incorrect 'data_type' configuration ('POPULATION')")
 
     try:
         snis_format = pd.DataFrame(
             columns=[
                 "data_type",
-                "dx_uid",
+                "dx",
                 "period",
                 "org_unit",
                 "category_option_combo",
                 "attribute_option_combo",
-                "rate_type",
+                "rate_metric",
                 "domain_type",
                 "value",
             ]
@@ -474,13 +477,13 @@ def map_to_snis_format(
         snis_format["value"] = dhis_data.value
         snis_format["data_type"] = data_type
         if data_type in ["DATAELEMENT", "POPULATION"]:
-            snis_format["dx_uid"] = dhis_data.dataElement
+            snis_format["dx"] = dhis_data.dataElement
             snis_format["category_option_combo"] = dhis_data.categoryOptionCombo
             snis_format["attribute_option_combo"] = dhis_data.attributeOptionCombo
         if data_type == "DATASET":
-            snis_format[["dx_uid", "rate_type"]] = dhis_data.dx.str.split(".", expand=True)
+            snis_format[["dx", "rate_metric"]] = dhis_data.dx.str.split(".", expand=True)
         if data_type == "INDICATOR":
-            snis_format["dx_uid"] = dhis_data.dx
+            snis_format["dx"] = dhis_data.dx
         return snis_format
     except Exception as e:
         raise Exception(f"Unexpected Error while creating routine format table: {e}") from e
