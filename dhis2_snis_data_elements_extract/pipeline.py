@@ -68,7 +68,6 @@ def dhis2_snis_data_elements_extract(
     try:
         config = load_configuration(pipeline_path / "config" / "extract_config.json")
         dhis2_client = connect_to_dhis2(connection_str=config["SETTINGS"]["DHIS2_CONNECTION"])
-        updates_collector = {}
 
         extract_pyramid(
             pipeline_path=pipeline_path,
