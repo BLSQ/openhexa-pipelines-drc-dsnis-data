@@ -69,7 +69,7 @@ def dhis2_snis_sentinel_extract(start_date: str, end_date: str, run_extract_data
         update_snis_dataset_with_extracts(
             pipeline_path=pipeline_path,
             updates_collector=updates_collector,
-            dataset_id="snis-data-elements-extracts",
+            dataset_id="snis-sentinel-dataset",
             run_task=add_to_dataset,
         )
         current_run.log_info("Pipeline execution completed successfully.")
