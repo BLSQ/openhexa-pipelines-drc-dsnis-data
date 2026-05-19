@@ -116,9 +116,8 @@ def extract_pyramid(pipeline_path: str, dhis2_snis_client: DHIS2, run_task: bool
         )
         org_units = pd.DataFrame(org_units)
         org_units = org_units[org_units.level <= 5]  # Select level 5
-        current_run.log_info(
-            f"Extracted {len(org_units[org_units.level == 5].id.unique())} units at organisation unit level {5}"
-        )
+        org_units = org_units.sort_values(by="level", ascending=True)
+        current_run.log_info(f"{len(org_units[org_units.level == 5].id.unique())} units at organisation unit level {5}")
 
         # Save as Parquet
         pyramid_path = pipeline_path / "data" / "pyramid"
