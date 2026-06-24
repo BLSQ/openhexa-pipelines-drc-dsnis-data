@@ -3,6 +3,7 @@ __pycache__/
 *.py[codz]
 *$py.class
 .vscode/
+workspace/
 
 # C extensions
 *.so
@@ -220,3 +221,5 @@ __marimo__/
 
 # Claude Code
 CLAUDE.md
+
+*.yaml
