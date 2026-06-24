@@ -68,10 +68,7 @@ def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_dat
         raise ValueError
 
     try:
-        extract_pyramid_metadata(
-            pipeline_path=pipeline_path,
-            dhis2_snis_client=dhis2_client,
-        )
+        extract_pyramid_metadata(pipeline_path=pipeline_path, dhis2_snis_client=dhis2_client, run_task=run_extract_data)
 
         extract_data(
             pipeline_path=pipeline_path,
@@ -106,11 +103,15 @@ def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_dat
         raise
 
 
-def extract_pyramid_metadata(pipeline_path: str, dhis2_snis_client: DHIS2) -> None:
+def extract_pyramid_metadata(pipeline_path: str, dhis2_snis_client: DHIS2, run_task: bool) -> None:
     """Pyramid extraction task.
 
     extracts and saves a pyramid dataframe for all levels (could be set via config in the future)
     """
+    if not run_task:
+        current_run.log_info("Skipping pyramid metadata extraction as run_task is set to False.")
+        return
+
     current_run.log_info("Retrieving SNIS DHIS2 pyramid metadata")
 
     try:
@@ -136,6 +137,7 @@ def extract_data(
 ) -> None:
     """Data extraction task."""
     if not run_task:
+        current_run.log_info("Skipping data extraction as run_task is set to False.")
         return
 
     current_run.log_info("Retrieving DHIS2 analytics data")
@@ -427,15 +429,13 @@ def collect_population_data_for_periods(extract_periods: list[str], snis_extract
     return pop_paths
 
 
-def update_snis_dataset(updates_collector: dict[Path], dataset_id: str, run_task: bool) -> None:
+def update_snis_dataset(new_extracts: list[Path], dataset_id: str, run_task: bool) -> None:
     """Updates the SNIS dataset with the new extracts.
 
     This function takes the paths of the new extracts from the updates collector and updates the OH dataset.
     """
     if not run_task:
         return
-
-    new_extracts = [item for values in updates_collector.values() for item in values]
 
     if not new_extracts:
         current_run.log_info("No new extracts to update in the dataset.")
