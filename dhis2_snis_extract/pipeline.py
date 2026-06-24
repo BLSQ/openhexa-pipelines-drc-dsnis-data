@@ -116,6 +116,7 @@ def dhis2_snis_extract(
 
     except Exception as e:
         current_run.log_error(f"Error occurred: {e}")
+        raise
 
 
 def extract_pyramid(pipeline_path: str, dhis2_snis_client: DHIS2, run: bool, updates_collector: dict) -> None:
