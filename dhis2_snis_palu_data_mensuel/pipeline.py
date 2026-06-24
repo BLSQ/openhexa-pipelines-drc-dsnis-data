@@ -84,12 +84,16 @@ def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_dat
         current_run.log_error(f"An error occurred: {e}")
         raise
 
-    palu_extract_paths = compile_palu_extracts(
-        extract_periods=extract_periods,
-        data_path=pipeline_path / "data",
-        snis_extracts_path=pipelines_root / "dhis2_snis_extract" / "data",
-        output_path=pipeline_path / "data" / "palu_extracts",
-    )
+    try:
+        palu_extract_paths = compile_palu_extracts(
+            extract_periods=extract_periods,
+            data_path=pipeline_path / "data",
+            snis_extracts_path=pipelines_root / "dhis2_snis_extract" / "data",
+            output_path=pipeline_path / "data" / "palu_extracts",
+        )
+    except Exception as e:
+        current_run.log_error(f"An error while compiling data: {e}")
+        raise
 
     try:
         update_snis_dataset(
