@@ -64,8 +64,9 @@ def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_dat
     extract_periods = get_extract_periods(start, end)
 
     if start < "202501" or end < "202501":
-        current_run.log_error("Invalid date range: periods before January 2025 are not allowed.")
-        raise ValueError
+        msg = "Invalid date range: periods before January 2025 are not allowed."
+        current_run.log_error(msg)
+        raise ValueError(msg)
 
     try:
         extract_pyramid_metadata(pipeline_path=pipeline_path, dhis2_snis_client=dhis2_client, run_task=run_extract_data)
@@ -97,7 +98,7 @@ def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_dat
 
     try:
         update_snis_dataset(
-            updates_collector=palu_extract_paths,
+            new_extracts=palu_extract_paths,
             dataset_id="snis-palu-mensuel-extracts",
             run_task=add_to_dataset,
         )
@@ -108,10 +109,7 @@ def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_dat
 
 
 def extract_pyramid_metadata(pipeline_path: str, dhis2_snis_client: DHIS2, run_task: bool) -> None:
-    """Pyramid extraction task.
-
-    extracts and saves a pyramid dataframe for all levels (could be set via config in the future)
-    """
+    """Extract and saves the pytamid metadata at level 5."""
     if not run_task:
         current_run.log_info("Skipping pyramid metadata extraction as run_task is set to False.")
         return
@@ -174,7 +172,7 @@ def extract_data(
         org_unit_list=fosa_list,
         config=config,
     )
-    current_run.log_info("Reporting rates finished.")
+    current_run.log_info("Reporting rates extract finished.")
 
 
 def _get_ou_list(pyramid_fname: Path, ou_level: int) -> list:
@@ -247,7 +245,7 @@ def _extract_reporting_rates_for_periods(
             if not raw_data_path:
                 current_run.log_info(f"No reporting rates data for period {period}.")
     except Exception as e:
-        raise Exception(f"Extract data elements error : {e}") from e  # let it crash!
+        raise Exception(f"Extract reporting rates error : {e}") from e  # let it crash!
 
 
 def compile_palu_extracts(
@@ -284,7 +282,7 @@ def compile_palu_extracts(
 
 
 def collect_data_for_periods(
-    periods: str, source_path: Path, snis_extracts_path: Path, output_path: Path
+    periods: list[str], source_path: Path, snis_extracts_path: Path, output_path: Path
 ) -> list[Path]:
     """Collects and creates extracts based on the new extracts and search for additional data in snis extracts.
 
@@ -309,6 +307,7 @@ def collect_data_for_periods(
 
     # This is the list of reporting rates present in the SNIS extracts that we want to include
     required_reporting_rates = ["ahT7ysZZ913", "E4BX1ea2iDJ", "DxDuYrrZSa7", "CfCNNEwbTSH"]
+    required_reporting_metrics = ["ACTUAL_REPORTS", "ACTUAL_REPORTS_ON_TIME", "EXPECTED_REPORTS"]
 
     # Set up the schema for the extract DataFrame
     extract_schema = {
@@ -341,6 +340,7 @@ def collect_data_for_periods(
             source_path=source_path / "reporting_rates",
             snis_extract=snis_df if data_elements_snis_file else pl.DataFrame(),
             snis_required_rr=required_reporting_rates,
+            snis_required_metrics=required_reporting_metrics,
             schema=extract_schema,
         )
 
@@ -387,7 +387,12 @@ def _collect_data_elements_for_period(
 
 
 def _collect_reporting_rates_for_period(
-    period: str, source_path: Path, snis_extract: pl.DataFrame, snis_required_rr: list, schema: dict
+    period: str,
+    source_path: Path,
+    snis_extract: pl.DataFrame,
+    snis_required_rr: list,
+    snis_required_metrics: list,
+    schema: dict,
 ) -> pl.DataFrame:
     """Collects reporting rates for a given period from the source path and appends them to the provided DataFrame.
 
@@ -407,7 +412,9 @@ def _collect_reporting_rates_for_period(
     # Search for the additional reporting rates in parquet files in the snis folder
     if not snis_extract.is_empty():
         snis_rr_df = snis_extract.filter(
-            (pl.col("data_type") == "REPORTING_RATE") & pl.col("dx").is_in(snis_required_rr)
+            (pl.col("data_type") == "REPORTING_RATE")
+            & pl.col("dx").is_in(snis_required_rr)
+            & (pl.col("rate_metric").is_in(snis_required_metrics))
         ).cast(schema)
         reporting_rates_df = pl.concat([reporting_rates_df, snis_rr_df])
 
