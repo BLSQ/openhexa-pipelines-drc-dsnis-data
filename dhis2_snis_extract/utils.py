@@ -463,10 +463,6 @@ def resolve_dates_and_validate(start_date: str, end_date: str, config: dict) -> 
         except Exception as e:
             raise Exception(f"Error in start/end date configuration: {e}") from e
 
-    # Date validations
-    if start_date and end_date and start_date > end_date:
-        raise ValueError(f"Start date {start_date} cannot be after end date {end_date}.")
-
     if start_result < "201701":
         current_run.log_warning(f"Start date {start_result} cannot be before 201701. Defaulting to 201701.")
         start_result = "201701"
@@ -474,6 +470,10 @@ def resolve_dates_and_validate(start_date: str, end_date: str, config: dict) -> 
     if end_result < "201701":
         current_run.log_warning(f"End date {end_result} cannot be before 201701. Defaulting to 201701.")
         end_result = "201701"
+
+    # Date validations
+    if start_result > end_result:
+        raise ValueError(f"Start date {start_result} cannot be after end date {end_result}.")
 
     return start_result, end_result
 
