@@ -50,3 +50,18 @@ Extracts data from SNIS sentinel site datasets. Each sentinel dataset is extract
 | **Format** | `.parquet` |
 | **Dataset** | [SNIS Sentinel dataset](https://app.openhexa.org/workspaces/drc-dsnis/datasets/snis-sentinel-dataset/from/drc-dsnis/) |
 | **Shared to** | DRC PNLP |
+
+---
+
+### DHIS2 SNIS Palu Data Mensuel
+
+Compiles monthly malaria data by combining data elements and reporting rates extracted directly from SNIS with data sourced from the SNIS Extract pipeline outputs. Only periods from January 2025 onward are supported.
+
+| | |
+|---|---|
+| **Source** | DHIS2 SNIS (`drc-snis`) + SNIS Extract pipeline outputs |
+| **Data types** | Data elements, reporting rates, population|
+| **Storage path** | `pipelines/dhis2_snis_palu_data_mensuel/data` |
+| **Format** | `.parquet` |
+| **Dataset** | `snis-palu-mensuel-extracts` |
+| **Shared to** | RDC Palu rapports mensuels (`rdc-palu-rapports-mensuels`) |
