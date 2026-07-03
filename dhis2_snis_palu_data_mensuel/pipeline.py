@@ -51,7 +51,14 @@ from utils import (
     help="Add extracts created in this run to the  dataset.",
 )
 def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_data: bool, add_to_dataset: bool):
-    """Pipeline orchestration here."""
+    """Orchestrates the SNIS palu monthly extraction, compilation, and dataset update.
+
+    Args:
+        start_date (str): Start date for data extraction in YYYYMM format.
+        end_date (str): End date for data extraction in YYYYMM format.
+        run_extract_data (bool): Whether to run the DHIS2 data extraction step.
+        add_to_dataset (bool): Whether to push the compiled extracts to the OpenHEXA dataset.
+    """
     pipelines_root = Path(workspace.files_path) / "pipelines"
     pipeline_path = pipelines_root / "dhis2_snis_palu_data_mensuel"
 
@@ -91,6 +98,7 @@ def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_dat
             data_path=pipeline_path / "data",
             snis_extracts_path=pipelines_root / "dhis2_snis_extract" / "data",
             output_path=pipeline_path / "data" / "palu_extracts",
+            config_path=pipeline_path / "config",
         )
     except Exception as e:
         current_run.log_error(f"An error while compiling data: {e}")
@@ -109,7 +117,13 @@ def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_dat
 
 
 def extract_pyramid_metadata(pipeline_path: str, dhis2_snis_client: DHIS2, run_task: bool) -> None:
-    """Extract and saves the pytamid metadata at level 5."""
+    """Extracts and saves the pyramid metadata at level 5.
+
+    Args:
+        pipeline_path (str): Root path of the pipeline used to resolve the output data folder.
+        dhis2_snis_client (DHIS2): Connected DHIS2 client used to retrieve the pyramid.
+        run_task (bool): Whether to run this extraction step.
+    """
     if not run_task:
         current_run.log_info("Skipping pyramid metadata extraction as run_task is set to False.")
         return
@@ -137,7 +151,15 @@ def extract_data(
     dhis2_snis_client: DHIS2,
     run_task: bool,
 ) -> None:
-    """Data extraction task."""
+    """Retrieves DHIS2 analytics data elements and reporting rates for the given periods.
+
+    Args:
+        pipeline_path (str): Root path of the pipeline used to resolve input/output data folders.
+        extract_periods (list[str]): Periods to extract, in YYYYMM format.
+        config (dict): Extraction configuration loaded from extract_config.json.
+        dhis2_snis_client (DHIS2): Connected DHIS2 client used to retrieve the data.
+        run_task (bool): Whether to run this extraction step.
+    """
     if not run_task:
         current_run.log_info("Skipping data extraction as run_task is set to False.")
         return
@@ -178,10 +200,12 @@ def extract_data(
 def _get_ou_list(pyramid_fname: Path, ou_level: int) -> list:
     """Retrieves a list of organizational unit IDs from the pyramid Parquet file based on the specified OU level.
 
-    Returns
-    -------
-    list
-        A list of organizational unit IDs corresponding to the specified OU level.
+    Args:
+        pyramid_fname (Path): Path to the pyramid metadata Parquet file.
+        ou_level (int): Organisation unit level to filter by.
+
+    Returns:
+        list: Organisation unit IDs corresponding to the specified OU level.
     """
     try:
         # Retrieve organisational units and filter by ou_level
@@ -201,7 +225,15 @@ def _extract_data_elements_for_periods(
     org_unit_list: list[str],
     config: dict,
 ) -> None:
-    """Wrapper function to handle the data extraction for a given period, with error handling and logging."""
+    """Downloads data elements for each period, with error handling and logging.
+
+    Args:
+        pipeline_path (Path): Root path of the pipeline used to resolve the output data folder.
+        dhis2_client (DHIS2): Connected DHIS2 client used to retrieve the data.
+        periods (list[str]): Periods to extract, in YYYYMM format.
+        org_unit_list (list[str]): Organisation unit IDs to extract data for.
+        config (dict): Extraction configuration loaded from extract_config.json.
+    """
     # Setup extractor
     dhis2_extractor = DHIS2Extractor(dhis2_client=dhis2_client, download_mode=config["SETTINGS"]["MODE"])
     try:
@@ -226,7 +258,15 @@ def _extract_reporting_rates_for_periods(
     org_unit_list: list[str],
     config: dict,
 ) -> None:
-    """Wrapper function to handle the data extraction for a given period, with error handling and logging."""
+    """Downloads reporting rates for each period, with error handling and logging.
+
+    Args:
+        pipeline_path (Path): Root path of the pipeline used to resolve the output data folder.
+        dhis2_client (DHIS2): Connected DHIS2 client used to retrieve the data.
+        periods (list[str]): Periods to extract, in YYYYMM format.
+        org_unit_list (list[str]): Organisation unit IDs to extract data for.
+        config (dict): Extraction configuration loaded from extract_config.json.
+    """
     # Setup extractor
     dhis2_extractor = DHIS2Extractor(dhis2_client=dhis2_client, download_mode=config["SETTINGS"]["MODE"])
     rr_ids = config["REPORTING_RATES"].get("DATASETS", [])
@@ -249,26 +289,35 @@ def _extract_reporting_rates_for_periods(
 
 
 def compile_palu_extracts(
-    extract_periods: list[str], data_path: Path, snis_extracts_path: Path, output_path: Path
+    extract_periods: list[str], data_path: Path, snis_extracts_path: Path, output_path: Path, config_path: Path
 ) -> list[Path]:
-    """Collects and creates extracts based on the new extracts and search for required data in snis extracts.
+    """Collects and creates extracts based on the new extracts and searches for required data in snis extracts.
 
-    Returns
-    -------
-    list[Path]
-        A dictionary containing the paths of the new extracts for each data type.
+    Args:
+        extract_periods (list[str]): Periods to compile, in YYYYMM format.
+        data_path (Path): Path to this pipeline's own extracted data.
+        snis_extracts_path (Path): Path to the dhis2_snis_extract pipeline's data.
+        output_path (Path): Path where the compiled palu extracts are saved.
+        config_path (Path): Path to the folder containing required_snis_ids.py.
+
+    Returns:
+        list[Path]: Paths of the compiled palu extracts, including the pyramid metadata and population data.
     """
     current_run.log_info("Compiling palu extracts..")
     output_path.mkdir(parents=True, exist_ok=True)
 
     palu_extracts = []
     palu_extracts.append(data_path / "pyramid_metadata" / "snis_pyramid_metadata.parquet")
+    req_de, req_rr, req_rr_metrics = load_required_dhis2_uids(config_path / "required_snis_ids.py")
 
     extract_path = collect_data_for_periods(
         periods=extract_periods,
         source_path=data_path,
         snis_extracts_path=snis_extracts_path,
         output_path=output_path,
+        required_data_elements=req_de,
+        required_reporting_rates=req_rr,
+        required_reporting_metrics=req_rr_metrics,
     )
     palu_extracts.extend(extract_path)
 
@@ -281,33 +330,49 @@ def compile_palu_extracts(
     return palu_extracts
 
 
-def collect_data_for_periods(
-    periods: list[str], source_path: Path, snis_extracts_path: Path, output_path: Path
-) -> list[Path]:
-    """Collects and creates extracts based on the new extracts and search for additional data in snis extracts.
+def load_required_dhis2_uids(identifiers_fname: Path) -> tuple[list[str], list[str], list[str]]:
+    """Loads the required DHIS2 data identifiers from a Python config file.
 
-    Returns
-    -------
-    list[Path]
-        A list containing the paths of the compiled palu extracts.
+    Args:
+        identifiers_fname (Path): Path to the Python file defining the required UID lists.
+
+    Returns:
+        tuple[list[str], list[str], list[str]]: Required data elements, required reporting rates,
+            and required reporting metrics, in that order.
+    """
+    namespace = {}
+    exec(identifiers_fname.read_text(encoding="utf-8"), namespace)
+    return (
+        namespace["required_data_elements"],
+        namespace["required_reporting_rates"],
+        namespace["required_reporting_metrics"],
+    )
+
+
+def collect_data_for_periods(
+    periods: list[str],
+    source_path: Path,
+    snis_extracts_path: Path,
+    output_path: Path,
+    required_data_elements: list,
+    required_reporting_rates: list,
+    required_reporting_metrics: list,
+) -> list[Path]:
+    """Collects and creates extracts based on the new extracts and searches for additional data in snis extracts.
+
+    Args:
+        periods (list[str]): Periods to compile, in YYYYMM format.
+        source_path (Path): Path to this pipeline's own extracted data.
+        snis_extracts_path (Path): Path to the dhis2_snis_extract pipeline's data.
+        output_path (Path): Path where the compiled palu extracts are saved.
+        required_data_elements (list): Data element UIDs to include from the SNIS extracts.
+        required_reporting_rates (list): Reporting rate UIDs to include from the SNIS extracts.
+        required_reporting_metrics (list): Reporting rate metrics to include from the SNIS extracts.
+
+    Returns:
+        list[Path]: Paths of the compiled palu extracts.
     """
     current_run.log_info(f"Compiling palu extract for period: {periods}..")
-
-    # This is the list of data elements present in the SNIS extracts that we want to include
-    required_data_elements = [
-        "rfeqp2kdOGi",
-        "AxJhIi7tUam",
-        "IPnqGkUUN6U",
-        "wfmDVt6RVm2",
-        "CIzQAR8IWH1",
-        "QafSfDEL1Ku",
-        "fsBcCCKHGUx",
-        "pOZcn5GNnRD",
-    ]
-
-    # This is the list of reporting rates present in the SNIS extracts that we want to include
-    required_reporting_rates = ["ahT7ysZZ913", "E4BX1ea2iDJ", "DxDuYrrZSa7", "CfCNNEwbTSH"]
-    required_reporting_metrics = ["ACTUAL_REPORTS", "ACTUAL_REPORTS_ON_TIME", "EXPECTED_REPORTS"]
 
     # Set up the schema for the extract DataFrame
     extract_schema = {
@@ -325,20 +390,19 @@ def collect_data_for_periods(
     palu_extracts = []
     for period in periods:
         data_elements_snis_file = next((snis_extracts_path / "snis_extracts").glob(f"snis_data_{period}.parquet"), None)
-        if data_elements_snis_file:
-            snis_df = pl.read_parquet(data_elements_snis_file) if data_elements_snis_file else pl.DataFrame()
+        snis_df = pl.read_parquet(data_elements_snis_file) if data_elements_snis_file else pl.DataFrame()
 
         data_elements_df = _collect_data_elements_for_period(
             period=period,
             source_path=source_path / "data_elements",
-            snis_extract=snis_df if data_elements_snis_file else pl.DataFrame(),
+            snis_extract=snis_df,
             snis_required_de=required_data_elements,
             schema=extract_schema,
         )
         reporting_rates_df = _collect_reporting_rates_for_period(
             period=period,
             source_path=source_path / "reporting_rates",
-            snis_extract=snis_df if data_elements_snis_file else pl.DataFrame(),
+            snis_extract=snis_df,
             snis_required_rr=required_reporting_rates,
             snis_required_metrics=required_reporting_metrics,
             schema=extract_schema,
@@ -365,10 +429,15 @@ def _collect_data_elements_for_period(
 
     Also searches for additional data elements in the SNIS extracts and appends them to the DataFrame.
 
-    Returns
-    -------
-    pl.DataFrame
-        A DataFrame containing the collected data elements for the specified period.
+    Args:
+        period (str): Period to collect, in YYYYMM format.
+        source_path (Path): Path to the local pipeline data folder for data elements.
+        snis_extract (pl.DataFrame): SNIS extract data to search for additional data elements.
+        snis_required_de (list): Data element UIDs to include from the SNIS extract.
+        schema (dict): Polars schema used to cast the collected data.
+
+    Returns:
+        pl.DataFrame: Collected data elements for the specified period.
     """
     # Search in local pipeline data folder
     data_elements_df = pl.DataFrame(schema=schema)
@@ -398,10 +467,16 @@ def _collect_reporting_rates_for_period(
 
     Also searches for additional reporting rates in the SNIS extracts and appends them to the DataFrame.
 
-    Returns
-    -------
-    pl.DataFrame
-        A DataFrame containing the collected reporting rates for the specified period.
+    Args:
+        period (str): Period to collect, in YYYYMM format.
+        source_path (Path): Path to the local pipeline data folder for reporting rates.
+        snis_extract (pl.DataFrame): SNIS extract data to search for additional reporting rates.
+        snis_required_rr (list): Reporting rate UIDs to include from the SNIS extract.
+        snis_required_metrics (list): Reporting rate metrics to include from the SNIS extract.
+        schema (dict): Polars schema used to cast the collected data.
+
+    Returns:
+        pl.DataFrame: Collected reporting rates for the specified period.
     """
     # Search in local pipeline data folder
     reporting_rates_df = pl.DataFrame(schema=schema)
@@ -424,10 +499,12 @@ def _collect_reporting_rates_for_period(
 def collect_population_data_for_periods(extract_periods: list[str], snis_extracts_path: Path) -> list[Path]:
     """Collects population data for the specified periods from the SNIS extracts.
 
-    Returns
-    -------
-    list[Path]
-        A list containing the paths of the population data extracts for each period.
+    Args:
+        extract_periods (list[str]): Periods to collect, in YYYYMM format.
+        snis_extracts_path (Path): Path to the dhis2_snis_extract pipeline's data.
+
+    Returns:
+        list[Path]: Paths of the population data extracts found for each period.
     """
     pop_paths = []
     year_periods = sorted(set([p[0:4] for p in extract_periods]))
@@ -443,7 +520,10 @@ def collect_population_data_for_periods(extract_periods: list[str], snis_extract
 def update_snis_dataset(new_extracts: list[Path], dataset_id: str, run_task: bool) -> None:
     """Updates the SNIS dataset with the new extracts.
 
-    This function takes the paths of the new extracts from the updates collector and updates the OH dataset.
+    Args:
+        new_extracts (list[Path]): Paths of the new extract files to push to the dataset.
+        dataset_id (str): OpenHEXA dataset identifier to update.
+        run_task (bool): Whether to run this update step.
     """
     if not run_task:
         return
