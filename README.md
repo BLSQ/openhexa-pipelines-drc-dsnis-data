@@ -63,5 +63,20 @@ Compiles monthly malaria data by combining data elements and reporting rates ext
 | **Data types** | Data elements, reporting rates, population|
 | **Storage path** | `pipelines/dhis2_snis_palu_data_mensuel/data` |
 | **Format** | `.parquet` |
-| **Dataset** | `snis-palu-mensuel-extracts` |
+| **Dataset** | [`SNIS Palu mensuel extracts`](https://app.openhexa.org/workspaces/drc-dsnis/datasets/snis-palu-mensuel-extracts/from/drc-dsnis/)|
 | **Shared to** | RDC Palu rapports mensuels (`rdc-palu-rapports-mensuels`) |
+
+---
+
+### DHIS2 PRS Dataset Extract
+
+Extracts a subset of SNIS data scoped for the PRS integration: data elements at facility and zone de santé levels, restricted to a configured list of provinces, along with the corresponding org unit pyramid.
+
+| | |
+|---|---|
+| **Source** | DHIS2 SNIS (`drc-snis`) |
+| **Data types** | Data elements, org unit pyramid |
+| **Storage path** | `pipelines/dhis2_prs_dataset_extract/data` |
+| **Format** | `.parquet` |
+| **Dataset** | [SNIS PRS dataset sync](https://app.openhexa.org/workspaces/drc-dsnis/datasets/snis-prs-dataset-sync/from/drc-dsnis/) |
+| **Shared to** | DRC PRS (`drc-prs`) |

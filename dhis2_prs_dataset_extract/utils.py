@@ -19,22 +19,15 @@ from openhexa.toolbox.dhis2.periods import period_from_string
 def connect_to_dhis2(connection_str: str, cache_dir: Path | None = None) -> DHIS2:
     """Establishes a connection to DHIS2 using the provided connection string and cache directory.
 
-    Parameters
-    ----------
-    connection_str : str
-        The connection string for DHIS2.
-    cache_dir : Path
-        The directory to use for caching DHIS2 data.
+    Args:
+        connection_str: The connection string for DHIS2.
+        cache_dir: The directory to use for caching DHIS2 data.
 
-    Returns
-    -------
-    DHIS2
+    Returns:
         An instance of the DHIS2 client.
 
-    Raises
-    ------
-    Exception
-        If there is an error while connecting to DHIS2.
+    Raises:
+        Exception: If there is an error while connecting to DHIS2.
     """
     try:
         connection = workspace.dhis2_connection(connection_str)
@@ -51,10 +44,14 @@ def load_configuration(config_path: Path) -> dict:
     """Reads a JSON file configuration and returns its contents as a dictionary.
 
     Args:
-        config_path (str): Root path of the pipeline to find the file.
+        config_path: Root path of the pipeline to find the file.
 
     Returns:
-        dict: Dictionary containing the JSON data.
+        Dictionary containing the JSON data.
+
+    Raises:
+        Exception: If the file was not found, or if its contents are not valid JSON.
+        RuntimeError: If an unexpected error occurs while loading the configuration.
     """
     try:
         with Path.open(config_path, "r") as file:
@@ -62,28 +59,26 @@ def load_configuration(config_path: Path) -> dict:
 
         current_run.log_info(f"Configuration loaded from {config_path}.")
         return data
-    except FileNotFoundError as e:
-        raise Exception(f"The file '{config_path}' was not found {e}") from e
+    except FileNotFoundError:
+        raise Exception(f"The file '{config_path}' was not found.") from None
     except json.JSONDecodeError as e:
         raise Exception(f"Error decoding JSON: {e}") from e
     except Exception as e:
-        raise Exception(f"Unexpected error while loading configuration '{config_path}' {e}") from e
+        raise RuntimeError(f"Unexpected error while loading configuration '{config_path}' {e}") from e
 
 
 def retrieve_ou_list(dhis2_client: DHIS2, ou_level: int) -> list:
     """Retrieve a list of organisational unit IDs from DHIS2 filtered by the specified organisational unit level.
 
-    Parameters
-    ----------
-    dhis2_client : DHIS2
-        An instance of the DHIS2 client.
-    ou_level : int
-        The organisational unit level to filter by.
+    Args:
+        dhis2_client: An instance of the DHIS2 client.
+        ou_level: The organisational unit level to filter by.
 
-    Returns
-    -------
-    list
+    Returns:
         A list of organisational unit IDs matching the specified level.
+
+    Raises:
+        Exception: If an error occurs while retrieving or filtering the organisation units.
     """
     try:
         # Retrieve organisational units and filter by ou_level
@@ -150,24 +145,16 @@ def update_extract(
     - Rows only in target_df are kept as-is, unless there's a match in new_data_df,
       in which case they are updated (even if the new value is NaN).
 
-    Parameters
-    ----------
-    new_data_df : pd.DataFrame
-        DataFrame containing new or updated data.
-    target_df : pd.DataFrame
-        DataFrame to be updated.
-    key_columns : list | None, optional
-        Columns to merge on. Defaults to standard key columns if None.
+    Args:
+        new_data_df: DataFrame containing new or updated data.
+        target_df: DataFrame to be updated.
+        key_columns: Columns to merge on. Defaults to a standard set of key columns if None.
 
-    Returns
-    -------
-    pd.DataFrame
-        Updated DataFrame.
+    Returns:
+        The updated DataFrame.
 
-    Raises
-    ------
-    ValueError
-        If any key columns are missing from either DataFrame.
+    Raises:
+        ValueError: If any key columns are missing from either DataFrame.
     """
     if not key_columns:
         key_columns = [
@@ -257,8 +244,11 @@ def save_to_parquet(data: pd.DataFrame | pl.DataFrame, filename: Path) -> None:
     """Safely saves a pandas or polars DataFrame to a Parquet file using a temporary file and atomic replace.
 
     Args:
-        data (pd.DataFrame | pl.DataFrame): The DataFrame to save.
-        filename (Path): The path where the Parquet file will be saved.
+        data: The DataFrame to save.
+        filename: The path where the Parquet file will be saved.
+
+    Raises:
+        TypeError: If `data` is neither a pandas nor a polars DataFrame.
     """
     filename = Path(filename)
     filename.parent.mkdir(parents=True, exist_ok=True)
@@ -285,46 +275,40 @@ def save_to_parquet(data: pd.DataFrame | pl.DataFrame, filename: Path) -> None:
         raise
 
 
-def read_parquet_extract(parquet_file: Path) -> pd.DataFrame:
-    """Reads a Parquet file and returns its contents as a pandas DataFrame.
+def read_parquet_extract(parquet_file: Path) -> pl.DataFrame:
+    """Reads a Parquet file and returns its contents as a Polars DataFrame.
 
-    Parameters
-    ----------
-    parquet_file : Path
-        The path to the Parquet file to be read.
+    Args:
+        parquet_file: The path to the Parquet file to be read.
 
-    Returns
-    -------
-    pd.DataFrame
-        The contents of the Parquet file as a DataFrame.
+    Returns:
+        The contents of the Parquet file as a Polars DataFrame.
 
-    Raises
-    ------
-    FileNotFoundError
-        If the specified file does not exist.
-    pd.errors.EmptyDataError
-        If the Parquet file is empty.
-    Exception
-        For any other unexpected errors during reading.
+    Raises:
+        FileNotFoundError: If the specified file does not exist.
+        polars.exceptions.ComputeError: If the Parquet file is empty or malformed.
+        Exception: For any other unexpected errors during reading.
     """
     try:
-        ou_source = pd.read_parquet(parquet_file)
+        return pl.read_parquet(parquet_file)
     except FileNotFoundError:
         raise FileNotFoundError(f"Error while loading the extract: File was not found {parquet_file}.") from None
-    except pd.errors.EmptyDataError:
-        raise pd.errors.EmptyDataError(f"Error while loading the extract: File is empty {parquet_file}.") from None
+    except pl.exceptions.ComputeError as e:
+        raise pl.exceptions.ComputeError(
+            f"Error while loading the extract: File is empty or malformed {parquet_file}."
+        ) from e
     except Exception as e:
-        raise RuntimeError(f"Error while loading the extract: {parquet_file}. Error: {e}") from None
-
-    return ou_source
+        raise RuntimeError(f"Error while loading the extract: {parquet_file} : {e}") from e
 
 
 def configure_logging(task_name: str, logs_path: Path = Path("/home/jovyan/tmp/logs")) -> tuple[logging.Logger, Path]:
     """Set up a logger for a specific task, with immediate flush behavior.
 
-    Returns
-    -------
-    tuple[logging.Logger, Path]
+    Args:
+        task_name: Name of the task, used to name the logger and the log file.
+        logs_path: Directory where the log file will be created. Defaults to "/home/jovyan/tmp/logs".
+
+    Returns:
         A tuple containing the configured logger and the path to the log file.
     """
 
@@ -356,10 +340,14 @@ def read_json_file(file_path: Path) -> dict:
     """Reads a JSON file and handles potential errors.
 
     Args:
-        file_path (Path): The path to the JSON file.
+        file_path: The path to the JSON file.
 
     Returns:
-        dict: Parsed JSON data if successful.
+        Parsed JSON data.
+
+    Raises:
+        FileNotFoundError: If the specified file does not exist.
+        Exception: If the file cannot be decoded as JSON, or another unexpected error occurs.
     """
     try:
         with Path.open(file_path, "r") as file:
@@ -375,9 +363,10 @@ def read_json_file(file_path: Path) -> dict:
 def is_valid_yyyymm(date: str) -> bool:
     """Validates if the provided string is in YYYYMM format and represents a valid month and year.
 
-    Returns
-    -------
-    bool
+    Args:
+        date: The date string to validate.
+
+    Returns:
         True if the date is valid, False otherwise.
     """
     if not re.match(r"^\d{6}$", date):
@@ -390,10 +379,12 @@ def is_valid_yyyymm(date: str) -> bool:
 def is_after_today(yyyymm: str) -> bool:
     """Checks if the provided YYYYMM date string represents a month after the current month.
 
-    Returns
-    -------
-    bool
-        True if the provided date is after the current month, False otherwise.
+    Args:
+        yyyymm: The date string to check, in YYYYMM format.
+
+    Returns:
+        True if the provided date is after the current month, False otherwise. Also returns False
+        if `yyyymm` is not a valid YYYYMM string.
     """
     try:
         date = datetime.strptime(yyyymm, "%Y%m")
@@ -405,13 +396,14 @@ def is_after_today(yyyymm: str) -> bool:
     return input_yyyymm > current_yyyymm
 
 
-def adjust_to_previous_month_if_current(date_str: str) -> str:
+def adjust_to_previous_month_if_current(date_str: str | None) -> str | None:
     """If the provided date_str is the current month, adjust it to the previous month. Otherwise, return it unchanged.
 
-    Returns
-    -------
-    str
-        Adjusted date string in YYYYMM format.
+    Args:
+        date_str: Date string in YYYYMM format, or None.
+
+    Returns:
+        Adjusted date string in YYYYMM format, or None if `date_str` is None.
     """
     if date_str is None:
         return None
@@ -431,10 +423,21 @@ def adjust_to_previous_month_if_current(date_str: str) -> str:
 def resolve_dates_and_validate(start_date: str, end_date: str, config: dict) -> tuple[str | None, str | None]:
     """Resolves and validates start and end dates for data extraction.
 
-    Returns
-    -------
-    tuple[str | None, str | None]
-        Resolved and validated start and end dates.
+    If `start_date`/`end_date` are not provided, defaults are derived from `config["SETTINGS"]`
+    (`STARTDATE`/`ENDDATE`, or `NUMBER_MONTHS_WINDOW` months before today). Resolved dates are
+    clamped to a minimum of "201701".
+
+    Args:
+        start_date: Start date in YYYYMM format, or empty/None to use the configured default.
+        end_date: End date in YYYYMM format, or empty/None to use the configured default.
+        config: Pipeline configuration dictionary, expected to contain a "SETTINGS" section.
+
+    Returns:
+        A tuple of the resolved and validated start and end dates, in YYYYMM format.
+
+    Raises:
+        Exception: If the date settings in `config["SETTINGS"]` are invalid.
+        ValueError: If the resolved start date is after the resolved end date.
     """
     months_lag = config["SETTINGS"].get("NUMBER_MONTHS_WINDOW", 3)  # default 3 months window
 
@@ -482,10 +485,15 @@ def resolve_dates_and_validate(start_date: str, end_date: str, config: dict) -> 
 def get_extract_periods(start: str, end: str) -> list[str]:
     """Generates a list of periods between start and end in YYYYMM format.
 
-    Returns
-    -------
-    list[str]
-        List of periods in YYYYMM format.
+    Args:
+        start: Start period in YYYYMM format.
+        end: End period in YYYYMM format.
+
+    Returns:
+        List of periods in YYYYMM format, from `start` to `end` inclusive.
+
+    Raises:
+        Exception: If `start` or `end` cannot be parsed as valid periods.
     """
     try:
         # Get periods
@@ -502,12 +510,16 @@ def get_extract_periods(start: str, end: str) -> list[str]:
 
 
 def resolve_user_provided_date(date: str) -> str:
-    """Resolves and validates user-provided date.
+    """Resolves and validates a user-provided date.
 
-    Returns
-    -------
-    str:
-        Resolved and validated start and end dates.
+    Args:
+        date: Date string in YYYYMM format.
+
+    Returns:
+        The validated date, adjusted to the previous month if it falls in the current month.
+
+    Raises:
+        ValueError: If `date` is not a valid YYYYMM string, or if it is in the future.
     """
     if not is_valid_yyyymm(date):
         raise ValueError(f"Invalid date format: {date}. Expected YYYYMM ([2000/2100][01/12]).")
@@ -526,26 +538,17 @@ def add_files_to_dataset(
 ) -> bool:
     """Add files to a new dataset version.
 
-    Parameters
-    ----------
-    dataset_id : str
-        The ID of the dataset to which files will be added.
-    file_paths : list[Path]
-        A list of file paths to be added to the dataset.
-    ds_version_prefix : str, optional
-        The prefix for the dataset version name. Default is "DS".
-    ds_desc : str, optional
-        The description for the dataset version. Default is "Dataset version created by pipeline".
+    Args:
+        dataset_id: The ID of the dataset to which files will be added.
+        file_paths: A list of file paths to be added to the dataset.
+        ds_version_prefix: The prefix for the dataset version name. Defaults to "DS".
+        ds_desc: The description for the dataset version. Defaults to "Dataset version created by pipeline".
 
-    Returns
-    -------
-    bool
+    Returns:
         True if at least one file was added successfully, False otherwise.
 
-    Raises
-    ------
-    ValueError
-        If the dataset ID is not specified.
+    Raises:
+        ValueError: If `dataset_id` is not specified.
     """
     if not dataset_id:
         raise ValueError("Dataset ID is not specified.")
@@ -564,31 +567,12 @@ def add_files_to_dataset(
             current_run.log_warning(f"Unsupported file format: {src.name}")
             continue
 
-        tmp_path = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-                tmp_path = Path(tmp.name)
-
-            shutil.copy2(src, tmp_path)
-
-            if not added_any:
-                new_version = get_new_dataset_version(
-                    ds_id=dataset_id,
-                    prefix=ds_version_prefix,
-                    ds_desc=ds_desc,
-                )
-                current_run.log_info(f"New dataset version created: {new_version.name}")
-                added_any = True
-
-            new_version.add_file(str(tmp_path), filename=src.name)
+            new_version = _copy_and_add_file(src, new_version, dataset_id, ds_version_prefix, ds_desc)
             current_run.log_info(f"File {src.name} added to dataset version: {new_version.name}")
-
+            added_any = True
         except Exception as e:
             current_run.log_warning(f"File {src.name} cannot be added: {e}")
-
-        finally:
-            if tmp_path and tmp_path.exists():
-                tmp_path.unlink()
 
     if not added_any:
         current_run.log_warning("No valid files found. Dataset version was not created.")
@@ -597,27 +581,69 @@ def add_files_to_dataset(
     return True
 
 
+def _ensure_dataset_version(current: DatasetVersion | None, dataset_id: str, prefix: str, desc: str) -> DatasetVersion:
+    """Return the current dataset version, creating one lazily on first use.
+
+    Args:
+        current: The dataset version created so far in this run, or None if none has been created yet.
+        dataset_id: The ID of the dataset for which a new version will be created if needed.
+        prefix: Prefix for the dataset version name, used only if a new version needs to be created.
+        desc: Description used if the dataset itself has to be created, used only if a new version
+            needs to be created.
+
+    Returns:
+        `current` if it was already set, otherwise a newly created dataset version.
+    """
+    if current is not None:
+        return current
+    version = get_new_dataset_version(ds_id=dataset_id, prefix=prefix, ds_desc=desc)
+    current_run.log_info(f"New dataset version created: {version.name}")
+    return version
+
+
+def _copy_and_add_file(
+    src: Path, new_version: DatasetVersion | None, dataset_id: str, prefix: str, desc: str
+) -> DatasetVersion:
+    """Copy src to a temp file, then add it to a lazily created dataset version.
+
+    Args:
+        src: Path of the file to copy and add to the dataset.
+        new_version: The dataset version created so far in this run, or None if none has been created yet.
+        dataset_id: The ID of the dataset for which a new version will be created if needed.
+        prefix: Prefix for the dataset version name, used only if a new version needs to be created.
+        desc: Description used if the dataset itself has to be created, used only if a new version
+            needs to be created.
+
+    Returns:
+        The dataset version the file was added to (same object as `new_version` if it was already set).
+    """
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=src.suffix.lower(), delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        shutil.copy2(src, tmp_path)
+        new_version = _ensure_dataset_version(new_version, dataset_id, prefix, desc)
+        new_version.add_file(str(tmp_path), filename=src.name)
+        return new_version
+    finally:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
+
+
 def get_new_dataset_version(ds_id: str, prefix: str = "DS", ds_desc: str = "Dataset") -> DatasetVersion:
     """Create and return a new dataset version.
 
-    Parameters
-    ----------
-    ds_id : str
-        The ID of the dataset for which a new version will be created.
-    prefix : str, optional
-        Prefix for the dataset version name (default is "DS").
-    ds_desc : str, optional
-        Description for the dataset (default is "Dataset version created by pipeline").
+    Args:
+        ds_id: The ID of the dataset for which a new version will be created.
+        prefix: Prefix for the dataset version name. Defaults to "DS".
+        ds_desc: Description used when the dataset itself has to be created (i.e. `ds_id` doesn't
+            exist yet). Not used when a version is added to an existing dataset. Defaults to "Dataset".
 
-    Returns
-    -------
-    DatasetVersion
+    Returns:
         The newly created dataset version.
 
-    Raises
-    ------
-    Exception
-        If an error occurs while creating the new dataset version.
+    Raises:
+        Exception: If an error occurs while creating the new dataset version.
     """
     try:
         dataset = workspace.get_dataset(ds_id)
