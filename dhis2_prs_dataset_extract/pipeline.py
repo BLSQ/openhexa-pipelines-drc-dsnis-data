@@ -94,7 +94,7 @@ def dhis2_prs_dataset_extract(
     """
     pipeline_path = Path(workspace.files_path) / "pipelines" / "dhis2_prs_dataset_extract"
     config = load_configuration(pipeline_path / "configuration" / "extract_config.json")
-    dhis2_client = connect_to_dhis2(connection_str=config["SETTINGS"]["DHIS2_CONNECTION"])
+    dhis2_client = connect_to_dhis2(connection_str=config["SETTINGS"]["SOURCE_DHIS2_CONNECTION"])
     updates_collector = {}
 
     try:
