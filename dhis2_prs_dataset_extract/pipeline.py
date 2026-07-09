@@ -35,6 +35,7 @@ from utils import (
         "Start date for data extraction in YYYYMM format. "
         "If not set, it will default to current date minus NUMBER_MONTHS_WINDOW."
     ),
+    default=None,
 )
 @parameter(
     code="end_date",
@@ -45,6 +46,7 @@ from utils import (
         "End date for data extraction in YYYYMM format. "
         "If not set, it will default to current date minus NUMBER_MONTHS_WINDOW."
     ),
+    default=None,
 )
 @parameter(
     code="run_extract_data",
