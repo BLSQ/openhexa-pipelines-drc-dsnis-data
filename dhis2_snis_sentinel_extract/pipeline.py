@@ -64,6 +64,7 @@ def dhis2_snis_sentinel_extract(start_date: str, end_date: str, run_extract_data
             end_date=end_date,
             run_task=run_extract_data,
             updates_collector=updates_collector,
+            add_to_dataset=add_to_dataset,
         )
 
         update_snis_dataset_with_extracts(
@@ -84,10 +85,15 @@ def extract_data(
     start_date: str,
     end_date: str,
     run_task: bool,
-    updates_collector: dict,
+    updates_collector: dict[str, list[Path]],
+    add_to_dataset: bool,
 ) -> None:
     """Data extraction task."""
     if not run_task:
+        # NOTE: This is a hacky solution to allow the pipeline to run without extracting data
+        # but still update the dataset with existing files (if they already exist).
+        if add_to_dataset:
+            set_default_updates_collector(pipeline_path, updates_collector, start_date, end_date)
         return
 
     current_run.log_info("Retrieving DHIS2 analytics data")
@@ -123,7 +129,7 @@ def handle_data_element_extracts(
     dhis2_client: DHIS2,
     config: dict,
     extract_periods: list,
-    updates_collector: dict[Path],
+    updates_collector: dict[str, list[Path]],
 ) -> None:
     """Handles data elements extracts based on the configuration."""
     data_element_extracts = config.get("DATA_ELEMENTS", {}).get("EXTRACTS", [])
@@ -185,7 +191,7 @@ def handle_data_element_extracts(
 
 
 def update_snis_dataset_with_extracts(
-    pipeline_path: Path, updates_collector: dict[Path], dataset_id: str, run_task: bool
+    pipeline_path: Path, updates_collector: dict[str, list[Path]], dataset_id: str, run_task: bool
 ) -> None:
     """Updates the SNIS dataset with the new extracts.
 
@@ -216,7 +222,7 @@ def update_snis_dataset_with_extracts(
         raise Exception(f"Error while updating SNIS dataset: {e}") from e
 
 
-def save_updates_collector_json(updates_collector: dict, output_path: Path) -> None:
+def save_updates_collector_json(updates_collector: dict[str, list[Path]], output_path: Path) -> None:
     """Save updates_collector as a JSON file, raising an error if it fails."""
     try:
         serializable = {k: [str(p.name) for p in v] for k, v in updates_collector.items()}
@@ -224,6 +230,31 @@ def save_updates_collector_json(updates_collector: dict, output_path: Path) -> N
             json.dump(serializable, f, indent=2)
     except Exception as e:
         raise RuntimeError(f"Failed to save updates_collector to {output_path}: {e}") from e
+
+
+def set_default_updates_collector(
+    pipeline_path: Path, updates_collector: dict[str, list[Path]], start_date: str, end_date: str
+) -> None:
+    """Set default values in the updates_collector for periods and extracts."""
+    # get dates and validate
+    config = load_configuration(pipeline_path / "config" / "extract_config.json")
+    start, end = resolve_dates_and_validate(start_date, end_date, config)
+    extract_periods = get_extract_periods(start, end)
+    current_run.log_info(f"Setting extract files in updates_collector for periods: {extract_periods}")
+
+    data_element_extracts = config.get("DATA_ELEMENTS", {}).get("EXTRACTS", [])
+    for extract in data_element_extracts:
+        extract_id = extract.get("EXTRACT_UID")
+        if not extract_id:
+            current_run.log_warning("Missing 'EXTRACT_UID' in configuration, skipping this extract.")
+            continue
+        # Create a default path for each file
+        for period in extract_periods:
+            default_path = (
+                pipeline_path / f"data/extracts/data_elements/extract_{extract_id}/data_{extract_id}_{period}.parquet"
+            )
+            if default_path.exists():
+                updates_collector.setdefault(extract_id, []).append(default_path)
 
 
 if __name__ == "__main__":
