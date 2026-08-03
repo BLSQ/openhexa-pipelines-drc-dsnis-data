@@ -68,35 +68,48 @@ def dhis2_snis_data_elements_extract(
     try:
         config = load_configuration(pipeline_path / "config" / "extract_config.json")
         dhis2_client = connect_to_dhis2(connection_str=config["SETTINGS"]["DHIS2_CONNECTION"])
+        extract_periods = resolve_extract_periods(start_date, end_date, config)
+    except Exception as e:
+        current_run.log_error(f"Error during pipeline setup: {e}")
+        raise
 
+    try:
         extract_pyramid(
             pipeline_path=pipeline_path,
             dhis2_snis_client=dhis2_client,
             run_task=run_orgunits,
             updates_collector=updates_collector,
         )
+    except Exception as e:
+        current_run.log_error(f"Error during pyramid extraction: {e}")
+        raise
 
+    try:
         extract_data(
             pipeline_path=pipeline_path,
-            start_date=start_date,
-            end_date=end_date,
+            extract_periods=extract_periods,
             config=config,
             dhis2_snis_client=dhis2_client,
             run_task=run_extract_data,
             updates_collector=updates_collector,
         )
+    except Exception as e:
+        current_run.log_error(f"Error during data extraction: {e}")
+        raise
 
+    try:
         update_snis_dataset(
+            pipeline_path=pipeline_path,
+            extract_periods=extract_periods,
             updates_collector=updates_collector,
             dataset_id="snis-data-elements-extracts",
             run_task=add_to_dataset,
         )
-
-        current_run.log_info("Pipeline execution completed successfully.")
-
     except Exception as e:
-        current_run.log_error(f"An error occurred: {e}")
+        current_run.log_error(f"Error during dataset update: {e}")
         raise
+
+    current_run.log_info("Pipeline execution completed successfully.")
 
 
 def extract_pyramid(pipeline_path: str, dhis2_snis_client: DHIS2, run_task: bool, updates_collector: dict) -> None:
@@ -117,24 +130,22 @@ def extract_pyramid(pipeline_path: str, dhis2_snis_client: DHIS2, run_task: bool
         org_units = pd.DataFrame(org_units)
         org_units = org_units[org_units.level <= 5]  # Select level 5
         org_units = org_units.sort_values(by="level", ascending=True)
-        current_run.log_info(f"{len(org_units[org_units.level == 5].id.unique())} units at organisation unit level {5}")
-
-        # Save as Parquet
-        pyramid_path = pipeline_path / "data" / "pyramid"
-        save_to_parquet(data=org_units, filename=pyramid_path / "snis_pyramid.parquet")
-        current_run.log_info(f"SNIS DHIS2 pyramid data saved: {pyramid_path / 'snis_pyramid.parquet'}")
-
-        # add to updates collector
-        updates_collector.setdefault("pyramid", []).append(pyramid_path / "snis_pyramid.parquet")
-
     except Exception as e:
         raise Exception(f"Error while extracting SNIS DHIS2 Pyramid: {e}") from e
+    current_run.log_info(f"{len(org_units[org_units.level == 5].id.unique())} units at organisation unit level {5}")
+
+    # Save as Parquet
+    pyramid_path = pipeline_path / "data" / "pyramid"
+    save_to_parquet(data=org_units, filename=pyramid_path / "snis_pyramid.parquet")
+    current_run.log_info(f"SNIS DHIS2 pyramid data saved: {pyramid_path / 'snis_pyramid.parquet'}")
+
+    # add to updates collector
+    updates_collector.setdefault("pyramid", []).append(pyramid_path / "snis_pyramid.parquet")
 
 
 def extract_data(
     pipeline_path: str,
-    start_date: str,
-    end_date: str,
+    extract_periods: list,
     config: dict,
     dhis2_snis_client: DHIS2,
     run_task: bool,
@@ -146,17 +157,15 @@ def extract_data(
 
     current_run.log_info("Retrieving DHIS2 analytics data")
 
-    # get dates and validate
-    start, end = resolve_dates_and_validate(start_date, end_date, config)
-    extract_periods = get_extract_periods(start, end)
-
-    if start < "202501" or end < "202501":
+    if extract_periods[0] < "202501" or extract_periods[-1] < "202501":
         current_run.log_error("Invalid date range: periods before January 2025 are not allowed.")
         raise ValueError
 
     # retrieve FOSA ids from SNIS
     fosa_list = get_ou_list(pyramid_fname=pipeline_path / "data" / "pyramid" / "snis_pyramid.parquet", ou_level=5)
-    current_run.log_info(f"Download MODE: {config['SETTINGS']['MODE']} from: {start} to {end}")
+    current_run.log_info(
+        f"Download MODE: {config['SETTINGS']['MODE']} from: {extract_periods[0]} to {extract_periods[-1]}"
+    )
 
     # limits
     dhis2_snis_client.analytics.MAX_DX = 100
@@ -200,7 +209,9 @@ def handle_extract_for_period(
         current_run.log_info(f"No data added for period {period}.")
 
 
-def update_snis_dataset(updates_collector: dict[Path], dataset_id: str, run_task: bool) -> None:
+def update_snis_dataset(
+    pipeline_path: Path, extract_periods: list, updates_collector: dict[Path], dataset_id: str, run_task: bool
+) -> None:
     """Updates the SNIS dataset with the new extracts.
 
     This function takes the paths of the new extracts from the updates collector and updates the OH dataset.
@@ -211,8 +222,8 @@ def update_snis_dataset(updates_collector: dict[Path], dataset_id: str, run_task
     new_extracts = [item for values in updates_collector.values() for item in values]
 
     if not new_extracts:
-        current_run.log_info("No new extracts to update in the dataset.")
-        return
+        current_run.log_info("No new extracts, loading data from repository folder.")
+        new_extracts = build_snis_extracts_list(pipeline_path, extract_periods)
 
     try:
         add_files_to_dataset(
@@ -241,6 +252,50 @@ def get_ou_list(pyramid_fname: Path, ou_level: int) -> list:
 
     current_run.log_info(f"DHIS2 org units id list {len(ou_list)} at level {ou_level}")
     return ou_list
+
+
+def resolve_extract_periods(start_date: str, end_date: str, config: dict) -> list:
+    """Resolves the extract periods based on the provided start and end dates.
+
+    It also validates them against the configuration.
+
+    Returns
+    -------
+    list
+        A list of extract periods in YYYYMM format.
+    """
+    try:
+        start, end = resolve_dates_and_validate(start_date, end_date, config)
+        return get_extract_periods(start, end)
+    except Exception as e:
+        current_run.log_error(f"Error resolving extract periods: {e}")
+        raise
+
+
+def build_snis_extracts_list(pipeline_path: Path, extract_periods: list) -> list:
+    """Builds a list of SNIS extract file paths found in the pipeline's data directory.
+
+    Args:
+        pipeline_path: Root path of the pipeline, used to locate its data directory.
+        extract_periods: Periods (YYYYMM) to look up population and data extracts for.
+
+    Returns:
+        list: File paths for the pyramid, population, and data extracts that exist on disk.
+    """
+    snis_pyramid_dir = pipeline_path / "data" / "pyramid" / "snis_pyramid.parquet"
+    snis_extracts_dir = pipeline_path / "data" / "extracts"
+    extracts_list = []
+
+    if snis_pyramid_dir.exists():
+        extracts_list.append(snis_pyramid_dir)
+
+    if snis_extracts_dir.exists():
+        for period in extract_periods:
+            snis_extract_file = snis_extracts_dir / f"data_{period}.parquet"
+            if snis_extract_file.exists():
+                extracts_list.append(snis_extract_file)
+
+    return extracts_list
 
 
 if __name__ == "__main__":
