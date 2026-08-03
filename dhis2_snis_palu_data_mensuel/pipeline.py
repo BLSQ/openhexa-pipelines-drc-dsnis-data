@@ -62,15 +62,15 @@ def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_dat
     pipelines_root = Path(workspace.files_path) / "pipelines"
     pipeline_path = pipelines_root / "dhis2_snis_palu_data_mensuel"
 
-    # Load configuration and connect to DHIS2
-    config = load_configuration(pipeline_path / "config" / "extract_config.json")
-    dhis2_client = connect_to_dhis2(connection_str=config["SETTINGS"]["DHIS2_CONNECTION"])
+    try:
+        config = load_configuration(pipeline_path / "config" / "extract_config.json")
+        dhis2_client = connect_to_dhis2(connection_str=config["SETTINGS"]["DHIS2_CONNECTION"])
+        extract_periods = resolve_extract_periods(start_date, end_date, config)
+    except Exception as e:
+        current_run.log_error(f"Error during setup: {e}")
+        raise
 
-    # get dates and validate
-    start, end = resolve_dates_and_validate(start_date, end_date, config)
-    extract_periods = get_extract_periods(start, end)
-
-    if start < "202501" or end < "202501":
+    if extract_periods[0] < "202501" or extract_periods[-1] < "202501":
         msg = "Invalid date range: periods before January 2025 are not allowed."
         current_run.log_error(msg)
         raise ValueError(msg)
@@ -99,6 +99,7 @@ def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_dat
             snis_extracts_path=pipelines_root / "dhis2_snis_extract" / "data",
             output_path=pipeline_path / "data" / "palu_extracts",
             config_path=pipeline_path / "config",
+            run_task=run_extract_data,
         )
     except Exception as e:
         current_run.log_error(f"An error while compiling data: {e}")
@@ -106,7 +107,10 @@ def dhis2_snis_palu_data_mensuel(start_date: str, end_date: str, run_extract_dat
 
     try:
         update_snis_dataset(
+            pipeline_path=pipeline_path,
+            snis_extracts_path=pipelines_root / "dhis2_snis_extract" / "data",
             new_extracts=palu_extract_paths,
+            extract_periods=extract_periods,
             dataset_id="snis-palu-mensuel-extracts",
             run_task=add_to_dataset,
         )
@@ -289,7 +293,12 @@ def _extract_reporting_rates_for_periods(
 
 
 def compile_palu_extracts(
-    extract_periods: list[str], data_path: Path, snis_extracts_path: Path, output_path: Path, config_path: Path
+    extract_periods: list[str],
+    data_path: Path,
+    snis_extracts_path: Path,
+    output_path: Path,
+    config_path: Path,
+    run_task: bool,
 ) -> list[Path]:
     """Collects and creates extracts based on the new extracts and searches for required data in snis extracts.
 
@@ -299,10 +308,15 @@ def compile_palu_extracts(
         snis_extracts_path (Path): Path to the dhis2_snis_extract pipeline's data.
         output_path (Path): Path where the compiled palu extracts are saved.
         config_path (Path): Path to the folder containing required_snis_ids.py.
+        run_task (bool): Whether to run this compilation step.
 
     Returns:
         list[Path]: Paths of the compiled palu extracts, including the pyramid metadata and population data.
     """
+    if not run_task:
+        current_run.log_info("Skipping palu extracts compilation as run_task is set to False.")
+        return []
+
     current_run.log_info("Compiling palu extracts..")
     output_path.mkdir(parents=True, exist_ok=True)
 
@@ -517,11 +531,21 @@ def collect_population_data_for_periods(extract_periods: list[str], snis_extract
     return pop_paths
 
 
-def update_snis_dataset(new_extracts: list[Path], dataset_id: str, run_task: bool) -> None:
+def update_snis_dataset(
+    pipeline_path: Path,
+    snis_extracts_path: Path,
+    new_extracts: list[Path],
+    extract_periods: list,
+    dataset_id: str,
+    run_task: bool,
+) -> None:
     """Updates the SNIS dataset with the new extracts.
 
     Args:
+        pipeline_path (Path): Root path of the pipeline, used to locate its data directory.
+        snis_extracts_path (Path): Path to the dhis2_snis_extract pipeline's data.
         new_extracts (list[Path]): Paths of the new extract files to push to the dataset.
+        extract_periods (list): Periods (YYYYMM) to look up population and data extracts for.
         dataset_id (str): OpenHEXA dataset identifier to update.
         run_task (bool): Whether to run this update step.
     """
@@ -529,8 +553,8 @@ def update_snis_dataset(new_extracts: list[Path], dataset_id: str, run_task: boo
         return
 
     if not new_extracts:
-        current_run.log_info("No new extracts to update in the dataset.")
-        return
+        current_run.log_info("No new extracts, loading data from repository folder.")
+        new_extracts = build_snis_extracts_list(pipeline_path, snis_extracts_path, extract_periods)
 
     try:
         add_files_to_dataset(
@@ -540,6 +564,59 @@ def update_snis_dataset(new_extracts: list[Path], dataset_id: str, run_task: boo
         )
     except Exception as e:
         raise Exception(f"Error while updating SNIS dataset: {e}") from e
+
+
+def resolve_extract_periods(start_date: str, end_date: str, config: dict) -> list:
+    """Resolves the extract periods based on the provided start and end dates.
+
+    It also validates them against the configuration.
+
+    Returns
+    -------
+    list
+        A list of extract periods in YYYYMM format.
+    """
+    try:
+        start, end = resolve_dates_and_validate(start_date, end_date, config)
+        return get_extract_periods(start, end)
+    except Exception as e:
+        current_run.log_error(f"Error resolving extract periods: {e}")
+        raise
+
+
+def build_snis_extracts_list(pipeline_path: Path, snis_extracts_path: Path, extract_periods: list) -> list:
+    """Builds a list of SNIS extract file paths found in the pipeline's data directory.
+
+    Args:
+        pipeline_path: Root path of the pipeline, used to locate its data directory.
+        snis_extracts_path: Path to the dhis2_snis_extract pipeline's data.
+        extract_periods: Periods (YYYYMM) to look up population and data extracts for.
+
+    Returns:
+        list: File paths for the pyramid, population, and data extracts that exist on disk.
+    """
+    extracts_list = []
+    snis_pyramid_dir = pipeline_path / "data" / "pyramid_metadata" / "snis_pyramid_metadata.parquet"
+    if snis_pyramid_dir.exists():
+        extracts_list.append(snis_pyramid_dir)
+
+    # Palu extract files
+    snis_palu_extracts_dir = pipeline_path / "data" / "palu_extracts"
+    if snis_palu_extracts_dir.exists():
+        for period in extract_periods:
+            snis_palu_extract_file = snis_palu_extracts_dir / f"palu_extract_{period}.parquet"
+            if snis_palu_extract_file.exists():
+                extracts_list.append(snis_palu_extract_file)
+
+    # NOTE: Load populaton from dhis2_snis_extract pipeline data folder
+    snis_population_dir = snis_extracts_path / "population"
+    if snis_population_dir.exists():
+        for year in sorted(set([p[0:4] for p in extract_periods])):
+            snis_population_file = snis_population_dir / f"snis_population_{year}.parquet"
+            if snis_population_file.exists():
+                extracts_list.append(snis_population_file)
+
+    return extracts_list
 
 
 if __name__ == "__main__":
