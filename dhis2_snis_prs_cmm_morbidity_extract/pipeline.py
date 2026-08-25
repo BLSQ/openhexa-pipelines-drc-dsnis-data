@@ -8,7 +8,7 @@ from d2d_development.extract import DHIS2Extractor
 from dateutil.relativedelta import relativedelta
 from openhexa.sdk import current_run, parameter, pipeline, workspace
 from openhexa.toolbox.dhis2 import DHIS2
-from openhexa.toolbox.dhis2.dataframe import get_datasets
+from openhexa.toolbox.dhis2.dataframe import get_organisation_unit_groups
 from utils import (
     add_files_to_dataset,
     connect_to_dhis2,
@@ -98,11 +98,11 @@ def dhis2_snis_prs_cmm_morbidity_extract(
     updates_collector = {}
 
     try:
-        extract_pyramid(
-            dhis2_client=source_dhis2,
+        extract_metadata(
+            pipeline_path=pipeline_path,
+            source_dhis2=source_dhis2,
+            config=config,
             sync_config=read_json_file(pipeline_path / "configuration" / "sync_config.json"),
-            output_dir=pipeline_path / "data" / "pyramid",
-            filename="pyramid_data.parquet",
             updates_collector=updates_collector,
             run_task=run_extract_data,
         )
@@ -117,6 +117,7 @@ def dhis2_snis_prs_cmm_morbidity_extract(
             updates_collector=updates_collector,
             skip_existing_extracts=skip_existing_extracts,
         )
+
     except Exception as e:
         current_run.log_error(f"An error occurred data retrieval: {e}")
         raise
@@ -131,6 +132,28 @@ def dhis2_snis_prs_cmm_morbidity_extract(
     except Exception as e:
         current_run.log_error(f"An error occurred while updating the dataset: {e}")
         raise
+
+
+def extract_metadata(
+    pipeline_path: Path, source_dhis2: DHIS2, config: dict, sync_config: dict, updates_collector: dict, run_task: bool
+) -> None:
+    """Extracts the source DHIS2 pyramid and organisation unit groups and saves them as Parquet files."""
+    extract_pyramid(
+        dhis2_client=source_dhis2,
+        sync_config=sync_config,
+        output_dir=pipeline_path / "data" / "pyramid",
+        filename="pyramid_data.parquet",
+        updates_collector=updates_collector,
+        run_task=run_task,
+    )
+
+    extract_org_unit_groups(
+        dhis2_client=source_dhis2,
+        config=config,
+        output_dir=pipeline_path / "data" / "org_unit_group",
+        updates_collector=updates_collector,
+        run_task=run_task,
+    )
 
 
 def extract_pyramid(
@@ -166,6 +189,42 @@ def extract_pyramid(
     current_run.log_info(f"DHIS2 pyramid data saved: {pyramid_fname}")
 
 
+def extract_org_unit_groups(
+    dhis2_client: DHIS2,
+    config: dict,
+    output_dir: Path,
+    updates_collector: dict,
+    run_task: bool,
+):
+    """Extracts the source DHIS2 organisation unit groups and saves them as a Parquet file.
+
+    Args:
+        dhis2_client: DHIS2 client instance for data extraction.
+        config: Configuration dictionary containing extraction settings.
+        output_dir: Directory where the org unit groups Parquet file will be saved.
+        updates_collector: Dictionary to collect paths of new extracts produced in this run.
+        run_task: If False, the org unit group extraction is skipped entirely.
+    """
+    if not run_task:
+        current_run.log_info("Organisation unit group extraction skipped.")
+        return
+
+    source_oug_id = config.get("ORG_UNIT_GROUPS", {}).get("OUG_URBAN", [])
+    if source_oug_id is None:
+        current_run.log_warning("No org unit group configured in sync_config.json; skipping.")
+        return
+
+    oug_source = get_organisation_unit_groups(dhis2_client)
+    source_oug = oug_source.filter(pl.col("id").is_in([source_oug_id]))
+    if source_oug.is_empty():
+        current_run.log_warning(f"Org unit group '{source_oug_id}' not found in source DHIS2; nothing saved.")
+        return
+
+    save_to_parquet(data=source_oug, filename=output_dir / "org_unit_groups.parquet")
+    updates_collector.setdefault("org_unit_groups", []).append(output_dir / "org_unit_groups.parquet")
+    current_run.log_info(f"Organisation unit groups ({source_oug_id}) saved: {output_dir / 'org_unit_groups.parquet'}")
+
+
 def extract_prs_data(
     pipeline_path: str,
     dhis2_client: DHIS2,
@@ -194,6 +253,9 @@ def extract_prs_data(
 
     current_run.log_info("Retrieving DHIS2 analytics data")
 
+    # Load the source datasets and pyramid data (Already filtered)
+    source_pyramid = pl.read_parquet(pipeline_path / "data" / "pyramid" / "pyramid_data.parquet")
+
     # get dates and validate
     start, end = resolve_dates_and_validate(start_date, end_date, config)
 
@@ -203,14 +265,15 @@ def extract_prs_data(
     extract_periods = get_extract_periods(start_cmm, end)
 
     # Set extractor limits
-    dhis2_client.data_value_sets.MAX_DATA_ELEMENTS = 100
-    dhis2_client.data_value_sets.MAX_ORG_UNITS = 100
+    # dhis2_client.data_value_sets.MAX_DATA_ELEMENTS = 100
+    # dhis2_client.data_value_sets.MAX_ORG_UNITS = 100
     current_run.log_info(f"Extract periods from: {start_cmm} ({cmm_window} cmm window) to {end}")
     handle_data_element_extracts(
         pipeline_path=pipeline_path,
         dhis2_client=dhis2_client,
         config=config,
         extract_periods=extract_periods,
+        source_pyramid=source_pyramid,
         updates_collector=updates_collector,
         skip_existing_extracts=skip_existing_extracts,
     )
@@ -218,11 +281,56 @@ def extract_prs_data(
     current_run.log_info("Extracts finished.")
 
 
+def get_fosa_descendants_of_zs(pyramid: pl.DataFrame, dhis2_client: DHIS2, oug_id: str) -> list:
+    """Retrieves the list of FOSA organisation units that are descendants of urban Zones de sante.
+
+    Parameters
+    ----------
+    pyramid : pl.DataFrame
+        The organisation units pyramid as a Polars DataFrame.
+    dhis2_client : DHIS2
+        The DHIS2 client instance.
+    oug_id : str
+        The organisation unit group ID for urban Zones de sante.
+
+    Returns
+    -------
+    list
+        List of level 5 organisation unit IDs that are descendants of urban Zones de sante.
+    """
+    current_run.log_info(f"Retrieving Organization Units for Urban Health Zones under OUG '{oug_id}'")
+    ou_groups = get_organisation_unit_groups(dhis2_client)
+    zs_urban = ou_groups.filter(pl.col("id") == oug_id)
+    zs_urban_list = zs_urban["organisation_units"].explode().to_list()
+    parent_map = dict(
+        zip(
+            pyramid["id"],
+            pyramid["parent"].apply(lambda x: x["id"] if isinstance(x, dict) else None),
+            strict=True,
+        )
+    )
+    level5 = pyramid[pyramid["level"] == 5]["id"]
+
+    def get_zs_parent(ou: str) -> str | None:
+        """Climb 5 → 4 → 3.
+
+        Returns:
+          level 3 parent of level 5 org unit.
+        """
+        p4 = parent_map.get(ou)
+        if not p4:
+            return None
+        return parent_map.get(p4)
+
+    return [ou for ou in level5 if get_zs_parent(ou) in zs_urban_list]
+
+
 def handle_data_element_extracts(
     pipeline_path: Path,
     dhis2_client: DHIS2,
     config: dict,
     extract_periods: list[str],
+    source_pyramid: pl.DataFrame,
     updates_collector: dict,
     skip_existing_extracts: bool,
 ):
@@ -233,7 +341,6 @@ def handle_data_element_extracts(
         return
 
     current_run.log_info("Starting data element extracts.")
-    source_datasets = get_datasets(dhis2_client)
 
     if skip_existing_extracts:
         download_mode = "DOWNLOAD_NEW"
@@ -251,7 +358,6 @@ def handle_data_element_extracts(
         extract_id = extract.get("EXTRACT_UID")
         org_units_level = extract.get("ORG_UNITS_LEVEL", None)
         data_element_uids = extract.get("UIDS", [])
-        dataset_uid = extract.get("DATASET_UID")
 
         if extract_id is None:
             current_run.log_warning(
@@ -267,18 +373,11 @@ def handle_data_element_extracts(
             current_run.log_warning(f"No data elements defined for extract: {extract_id}, extract skipped.")
             continue
 
-        if not dataset_uid:
-            current_run.log_warning(f"No dataset id defined for extract: {extract_id}, extract skipped.")
-            continue
-
-        # get org units from the dataset directly
-        source_dataset = source_datasets.filter(pl.col("id").is_in([dataset_uid]))
-        org_units = source_dataset["organisation_units"].explode().to_list()
-
+        # get org units from the filtered pyramid
+        org_units = source_pyramid.filter(pl.col("level") == org_units_level).get_column("id").to_list()
         current_run.log_info(
             f"Starting data elements extract ID: '{extract_id}' ({idx + 1}) "
             f"with {len(data_element_uids)} data elements across {len(org_units)} org units "
-            f"(dataset: {source_dataset['name'][0]})."
         )
 
         # run data elements extraction per period
