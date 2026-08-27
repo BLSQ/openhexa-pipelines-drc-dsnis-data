@@ -49,6 +49,13 @@ from utils import (
     default=None,
 )
 @parameter(
+    code="run_metadata_data",
+    name="Extract metadata data",
+    type=bool,
+    default=True,
+    help="Extract metadata from source DHIS2.",
+)
+@parameter(
     code="run_extract_data",
     name="Extract data",
     type=bool,
@@ -59,8 +66,8 @@ from utils import (
     code="skip_existing_extracts",
     name="Skip existing extracts",
     type=bool,
+    help="If True, skips downloading extracts that already exist on disk.",
     default=False,
-    help="Skip downloading extracts that already exist in the repository folder.",
 )
 @parameter(
     "add_to_dataset",
@@ -71,7 +78,12 @@ from utils import (
     required=False,
 )
 def dhis2_snis_prs_cmm_morbidity_extract(
-    start_date: str, end_date: str, run_extract_data: bool, skip_existing_extracts: bool, add_to_dataset: bool
+    start_date: str,
+    end_date: str,
+    run_metadata_data: bool,
+    run_extract_data: bool,
+    skip_existing_extracts: bool,
+    add_to_dataset: bool,
 ):
     """Main pipeline function for DHIS2 dataset synchronization for SNIS -> PRS.
 
@@ -84,9 +96,9 @@ def dhis2_snis_prs_cmm_morbidity_extract(
             current date minus NUMBER_MONTHS_WINDOW (config).
         end_date: End date for data extraction in YYYYMM format. If not set, it will default to
             current date minus 1.
+        run_metadata_data: If True, runs the pyramid and organisation unit group extraction tasks.
         run_extract_data: If True, runs the pyramid and data extraction tasks.
-        skip_existing_extracts: If True, skips downloading extracts (pyramid and data elements)
-            that already exist on disk, reusing the existing files instead.
+        skip_existing_extracts: If True, skips downloading extracts that already exist on disk.
         add_to_dataset: If True, adds the extracted data to the dataset.
 
     Raises:
@@ -104,7 +116,7 @@ def dhis2_snis_prs_cmm_morbidity_extract(
             config=config,
             sync_config=read_json_file(pipeline_path / "configuration" / "sync_config.json"),
             updates_collector=updates_collector,
-            run_task=run_extract_data,
+            run_task=run_metadata_data,
         )
 
         extract_prs_data(
@@ -125,6 +137,9 @@ def dhis2_snis_prs_cmm_morbidity_extract(
     try:
         update_dataset_with_extracts(
             pipeline_path=pipeline_path,
+            start_date=start_date,
+            end_date=end_date,
+            config=config,
             updates_collector=updates_collector,
             dataset_id="snis-prs-cmm-extract",
             run_task=add_to_dataset,
@@ -150,7 +165,7 @@ def extract_metadata(
     extract_org_unit_groups(
         dhis2_client=source_dhis2,
         config=config,
-        output_dir=pipeline_path / "data" / "org_unit_group",
+        output_dir=pipeline_path / "data" / "org_unit_groups",
         updates_collector=updates_collector,
         run_task=run_task,
     )
@@ -185,7 +200,7 @@ def extract_pyramid(
     # Save as Parquet
     pyramid_fname = output_dir / filename
     save_to_parquet(data=org_units, filename=pyramid_fname)
-    updates_collector.setdefault("pyramid_data", []).append(pyramid_fname)
+    updates_collector.setdefault("pyramid", []).append(pyramid_fname)
     current_run.log_info(f"DHIS2 pyramid data saved: {pyramid_fname}")
 
 
@@ -402,7 +417,13 @@ def handle_data_element_extracts(
 
 
 def update_dataset_with_extracts(
-    pipeline_path: Path, updates_collector: dict[Path], dataset_id: str, run_task: bool
+    pipeline_path: Path,
+    start_date: str,
+    end_date: str,
+    config: dict,
+    updates_collector: dict[Path],
+    dataset_id: str,
+    run_task: bool,
 ) -> None:
     """Updates the SNIS dataset with the new extracts.
 
@@ -411,20 +432,33 @@ def update_dataset_with_extracts(
 
     Args:
         pipeline_path: Root path of the pipeline, used to save the extract/id mapping file.
+        start_date: Start date for data extraction in YYYYMM format.
+        end_date: End date for data extraction in YYYYMM format.
+        config: Configuration dictionary containing extraction settings.
         updates_collector: Dictionary of file paths produced in this run, keyed by extract identifier.
         dataset_id: The ID of the OpenHEXA dataset to update.
         run_task: If False, the dataset update is skipped entirely.
     """
     if not run_task:
+        current_run.log_info("Dataset update skipped.")
         return
 
     new_extracts = [item for values in updates_collector.values() for item in values]
+    mapping_file_path = pipeline_path / "data" / "updates_collector.json"
 
     if not new_extracts:
-        current_run.log_info("No new extracts to update in the dataset.")
-        return
+        current_run.log_info("No new extracts, loading data from repository folder.")
+        # Replicate the logic to get the extract periods considering cmm window
+        cmm_window = config["SETTINGS"].get("CMM_MONTHS_WINDOW", 6)
+        start, end = resolve_dates_and_validate(start_date, end_date, config)
+        start_cmm = (datetime.strptime(start, "%Y%m") - relativedelta(months=cmm_window)).strftime("%Y%m")
+        extract_periods = get_extract_periods(start_cmm, end)
+        new_extracts, updates_collector = build_extracts_list(
+            pipeline_path,
+            extract_periods,
+            extract_id="fosa_morbidity",  # hardcoded for now, as is the only one
+        )
 
-    mapping_file_path = pipeline_path / "data" / "updates_collector.json"
     save_updates_collector_json(updates_collector=updates_collector, output_path=mapping_file_path)
 
     try:
@@ -453,6 +487,51 @@ def save_updates_collector_json(updates_collector: dict, output_path: Path) -> N
             json.dump(serializable, f, indent=2)
     except Exception as e:
         raise RuntimeError(f"Failed to save updates_collector to {output_path}: {e}") from e
+
+
+def build_extracts_list(pipeline_path: Path, extract_periods: list, extract_id: str) -> tuple[list[Path], dict]:
+    """Builds a list of SNIS extract file paths found in the pipeline's data directory.
+
+    NOTE: So we can add files to the dataset even if no new extracts were produced in this run.
+
+    Args:
+        pipeline_path: Root path of the pipeline, used to locate its data directory.
+        extract_periods: Periods (YYYYMM) to look up population and data extracts for.
+        extract_id: Identifier for the data extract, used to locate its directory.
+
+    Returns:
+        tuple[list[Path], dict]: A tuple containing:
+            - A list of Path objects for the found extract files.
+            - A dictionary mapping extract identifiers to lists of their corresponding file paths.
+    """
+    snis_pyramid_path = pipeline_path / "data" / "pyramid" / "pyramid_data.parquet"
+    snis_oug_path = pipeline_path / "data" / "org_unit_groups" / "org_unit_groups.parquet"
+    snis_extracts_path = pipeline_path / "data" / "extracts" / "data_elements" / extract_id
+    extracts_list = []
+    updates_file = {}
+
+    if snis_pyramid_path.exists():
+        extracts_list.append(snis_pyramid_path)
+        updates_file.setdefault("pyramid", []).append(snis_pyramid_path)
+    else:
+        current_run.log_warning(f"Pyramid file not found: {snis_pyramid_path}")
+
+    if snis_oug_path.exists():
+        extracts_list.append(snis_oug_path)
+        updates_file.setdefault("org_unit_groups", []).append(snis_oug_path)
+    else:
+        current_run.log_warning(f"Organisation unit groups file not found: {snis_oug_path}")
+
+    if snis_extracts_path.exists():
+        for period in extract_periods:
+            snis_extract_file = snis_extracts_path / f"data_{period}.parquet"
+            if snis_extract_file.exists():
+                extracts_list.append(snis_extract_file)
+                updates_file.setdefault(extract_id, []).append(snis_extract_file)
+            else:
+                current_run.log_warning(f"Extract file for period {period} not found: {snis_extract_file}")
+
+    return extracts_list, updates_file
 
 
 if __name__ == "__main__":
