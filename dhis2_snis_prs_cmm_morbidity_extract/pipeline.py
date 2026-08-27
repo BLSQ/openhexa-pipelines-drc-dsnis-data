@@ -335,7 +335,7 @@ def handle_data_element_extracts(
     skip_existing_extracts: bool,
 ):
     """Handles data elements extracts based on the configuration."""
-    data_element_extracts = config.get("DATA_ELEMENT_EXTRACTS", {}).get("EXTRACTS", [])
+    data_element_extracts = config.get("DATA_ELEMENTS", {}).get("EXTRACTS", {})
     if len(data_element_extracts) == 0:
         current_run.log_info("No data elements to extract.")
         return
