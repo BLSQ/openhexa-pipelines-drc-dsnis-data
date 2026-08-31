@@ -80,3 +80,18 @@ Extracts a subset of SNIS data scoped for the PRS integration: data elements at 
 | **Format** | `.parquet` |
 | **Dataset** | [SNIS PRS dataset sync](https://app.openhexa.org/workspaces/drc-dsnis/datasets/snis-prs-dataset-sync/from/drc-dsnis/) |
 | **Shared to** | DRC PRS (`drc-prs`) |
+
+---
+
+### DHIS2 SNIS PRS CMM Morbidity Extract
+
+Extracts morbidity data elements from SNIS for all FOSA (health facilities) under a configured list of 20 provinces (sync_config.json), used to compute the CMM (Consommation Moyenne Mensuelle) for the PRS integration. Extraction periods are extended backwards by a configurable CMM window (default 6 months) to support the rolling average calculation, along with the org unit pyramid and the urban Zones de Santé org unit group.
+
+| | |
+|---|---|
+| **Source** | DHIS2 SNIS (`drc-snis`) |
+| **Data types** | Data elements (morbidity), org unit pyramid, org unit groups |
+| **Storage path** | `pipelines/dhis2_snis_prs_cmm_morbidity_extract/data` |
+| **Format** | `.parquet` |
+| **Dataset** | [SNIS PRS CMM extract dataset](https://app.openhexa.org/workspaces/drc-dsnis/datasets/snis-prs-cmm-extract/from/drc-dsnis/) |
+| **Shared to** | DRC PRS (`drc-prs`) |
