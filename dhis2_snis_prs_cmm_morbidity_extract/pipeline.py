@@ -224,9 +224,9 @@ def extract_org_unit_groups(
         current_run.log_info("Organisation unit group extraction skipped.")
         return
 
-    source_oug_id = config.get("ORG_UNIT_GROUPS", {}).get("OUG_URBAN", [])
-    if source_oug_id is None:
-        current_run.log_warning("No org unit group configured in sync_config.json; skipping.")
+    source_oug_id = config.get("ORG_UNIT_GROUPS", {}).get("OUG_URBAN", "")
+    if not source_oug_id:
+        current_run.log_warning("No org unit group configured in extract_config.json; skipping.")
         return
 
     oug_source = get_organisation_unit_groups(dhis2_client)
@@ -241,7 +241,7 @@ def extract_org_unit_groups(
 
 
 def extract_prs_data(
-    pipeline_path: str,
+    pipeline_path: Path,
     dhis2_client: DHIS2,
     config: dict,
     start_date: str,

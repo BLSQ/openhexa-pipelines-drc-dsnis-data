@@ -4,16 +4,50 @@ This pipeline extracts morbidity data elements from the DRC SNIS DHIS2 instance 
 
 > **Note:** Org units and data elements to extract are driven by the `sync_config.json` and `extract_config.json` configuration files.
 
+## Configuration files
+
+`sync_config.json` lists the province org unit UIDs to sync the pyramid for, and the org unit group(s) to extract:
+
+```json
+{
+    "ORG_UNITS": { "UIDS": ["rWrCdr321Qu", "..."] },
+    "ORG_UNIT_GROUPS": { "cOK4Feyi0nP": ["cOK4Feyi0nP"] }
+}
+```
+
+`extract_config.json` sets the extraction window/mode and the data elements to pull, grouped into named extracts:
+
+```json
+{
+    "SETTINGS": {
+        "SOURCE_DHIS2_CONNECTION": "drc-snis",
+        "NUMBER_MONTHS_WINDOW": 4,
+        "CMM_WINDOW_MONTHS": 6,
+        "MODE": "DOWNLOAD_REPLACE"
+    },
+    "ORG_UNIT_GROUPS": { "OUG_URBAN": "cOK4Feyi0nP" },
+    "DATA_ELEMENTS": {
+        "EXTRACTS": [
+            { "EXTRACT_UID": "fosa_morbidity", "UIDS": ["aZwnLALknnj", "..."], "ORG_UNITS_LEVEL": 5, "FREQUENCY": "MONTHLY" }
+        ]
+    },
+    "REPORTING_RATES": { "EXTRACTS": [] },
+    "INDICATORS": { "EXTRACTS": [] }
+}
+```
+
 ## Parameters
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `start_date` | string | Auto | Start of the extraction window in `YYYYMM` format. Defaults to current date minus a configured number of months. |
-| `end_date` | string | Auto | End of the extraction window in `YYYYMM` format. Defaults to current date minus 1 month. |
+| `start_date` | string | Auto | Start of the extraction window in `YYYYMM` format. If not provided, defaults to `SETTINGS.STARTDATE` in `extract_config.json`, or current date minus `SETTINGS.NUMBER_MONTHS_WINDOW` months if that is also unset. |
+| `end_date` | string | Auto | End of the extraction window in `YYYYMM` format. If not provided, defaults to `SETTINGS.ENDDATE` in `extract_config.json`, or current date minus 1 month if that is also unset. |
 | `run_metadata_data` | bool | `true` | Extract the org unit pyramid and org unit groups from the source DHIS2. |
 | `run_extract_data` | bool | `true` | Extract morbidity data elements from the source DHIS2. |
 | `skip_existing_extracts` | bool | `false` | If `true`, skips downloading extracts that already exist on disk. |
 | `add_to_dataset` | bool | `true` | Push all extracts produced in this run to the OpenHEXA dataset. |
+
+> Resolved `start_date`/`end_date` are clamped to a minimum of `201701`, and the run fails if the start date ends up after the end date.
 
 ## Output dataset
 
